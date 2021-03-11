@@ -1,0 +1,243 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+# Game Stop stock short squeeze 
+
+### by Pedro Guarda Chinen
+
+In this case analysis, the topic that I will dig into is the text analysis in four articles and in Twitter posts about the Game Stop stock that suffered a short squeezing, which is when investors who were in a short position on a stock, need to purchase then in order to cover their positions. That occurred last January when small investors organized on social media to buy the GME (Game Stop stock ticker) in order to take down some hedge funds. It worked in the begging when the stock went from $17.25 on 4 January to $347.51 on 27 January, an incredible gain of 1915% in only 3 weeks. The strategy worked and some hedge funds lost a lot of money, like Melvin Capital who lost 53%. (Kassair, 2021).
+
+
+## Articles analysis
+
+The first part of my analysis will be about the articles. I run a sentiment analysis using the **“Loughran”** which is a financial dictionary, since I am checking how the financial news was describing this GME movement. All four articles had a negative score being Business Insider the worst one with -1 and New York Times being the less negative with -0.29. To better understand why these articles were having negative sentiment I plot a word cloud with the sentiments related.
+
+
+```{r loadlib, echo=FALSE, results='hide', message=F, warning=F}
+library(dplyr)
+library(tidytext)
+library(janeaustenr)
+library(tidyr)
+library(textreadr)
+library(twitteR)
+library(wordcloud)
+library(ggplot2)
+library(widyr)
+library(reshape2)
+library(igraph)
+library(ggraph)
+
+#Importing all .txt files from one directory # a txt works like a csv file with multiple rows
+setwd("C:/Users/pedro/Documents/Hult/Text Analytics/Indv/txt")
+nm <- list.files(path="C:/Users/pedro/Documents/Hult/Text Analytics/Indv/txt")
+
+#using read document to import the data:
+my_txt_data <- read_document(file=nm[1]) #This comes out as a vector
+my_txt_data_together <- paste(my_txt_data, collapse = " ") # This will give us a concatenated vector
+
+df_text <- as.data.frame(do.call(rbind, lapply(nm, function(x) paste(read_document(file=x), collapse = " "))))
+
+#adding the website source of each txt
+source_news <- c("Bloomberg","Bussines Insider","NY Times","The Guardian")
+
+data(stop_words)
+
+df_text_un <- df_text %>%
+  mutate(source = source_news) %>%
+  unnest_tokens(word, V1) %>%
+  anti_join(stop_words) %>%
+  subset(word != "â")  #removing strange data from the dataframe
+
+#creating a dataframe without the stopwords
+count_text <-  df_text_un %>%
+  count(word, sort=TRUE)
+
+#using loughran data to analyse the financial related sentiment per publisher
+df_sentiment_count <- df_text_un %>%
+  inner_join(get_sentiments("loughran"), by = "word") %>%
+  count(sentiment,source) %>%
+  spread(sentiment, n, fill = 0)
+
+#creating a score based on the sentiments
+df_sentiment_count %>%
+  mutate(score = (positive - negative) / (positive + negative)) %>%
+  mutate(source = reorder(source, score))
+
+#creating a word clound with the financial sentiment
+
+count_text %>%
+  inner_join(get_sentiments("loughran")) %>%
+  count(word, sentiment, sort=TRUE) %>%
+  acast(word ~sentiment, value.var="n", fill=0) %>%
+  comparison.cloud(colors  = c("grey20", "grey80"),
+                   max.words=40, scale = c(1,0.1))
+
+```
+
+It’s possible to see words like *limit, speculation, speculated, risk uncertain*. The insight we can take from it is that the articles were skeptical about the reality of that incredible market movement and if it would keep rising. Using these words, the articles were trying to show to their readers the dangers that would evolve in buying the stocks at that moment. The behavioral finance field alert investors about a bull market, when they see an asset skyrocketing, they will want to have it, with fear of being out on huge gains while everyone is buying and having profits, so they would buy at higher prices when the market is saturated and will have huge losses instead of gains.
+
+Other words that we need to pay attention are *restricted, permission, convicting*. The authors were explaining what happened later when the Robinhood platform blocked their users from buying GME and other stocks. The perception we can take here is that the sentiment correlated to these words are *constraining and uncertain*, and is everything that a smart investor doesn’t want to. Some people were not aware of this movement and could just have bought the stock because a surprise on the gains and could have lost a lot of money on it. (Panetta, 2021).
+
+In order to figure out why the sentiment of those articles was differing, I run a **TF-IDF** analysis.
+
+```{r , echo=FALSE, results='hide', message=F, warning=F}
+
+# tf-idf analysis
+tf_idf_text <- df_text_un %>% 
+  count(source, word) %>%
+  bind_tf_idf(word, source, n) %>%
+  arrange(desc(tf_idf))
+
+# graphic analysis of tf-idf
+tf_idf_text %>%
+  mutate(word=factor(word, levels=rev(unique(word)))) %>%
+  group_by(source) %>%
+  top_n(10) %>%
+  ungroup %>%
+  ggplot(aes(word, tf_idf, fill=source))+
+  geom_col(show.legend=FALSE)+
+  labs(x=NULL, y="tf-idf")+
+  facet_wrap(~source, ncol=2, scales="free")+
+  coord_flip()
+
+```
+
+Scanning the plot, we can see that Bloomberg is more focused on the theoretical financial part of what happened, while Business Insider, the words look more like they were describing the company and explaining why that stock price didn’t make sense in terms of valuation. The New York Times in order hand was a mix of both and this could describe why it has a higher score. The Guardian is possible to see words like *power, market, a manipulation* which gave a negative aspect from it and shows that it is thinking on how legal this movement was.
+
+Last for the articles, I did a bigram plot to interpret what are the common bigrams between the articles.
+
+```{r , echo=FALSE, results='hide', message=F, warning=F}
+#doing bigram analysis
+bigram <- df_text %>%
+  unnest_tokens(bigram, V1, token = "ngrams", n=2) %>%
+  separate(bigram, c("word1", "word2"), sep=" ") %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(is.na(word1) == FALSE) %>%
+  filter(!word1 == "â") %>%
+  filter(!word2 %in% stop_words$word) %>%
+  filter(is.na(word2) == FALSE) %>%
+  filter(!word2 == "â") %>%
+  count(word1, word2, sort = TRUE)
+
+#ploting bigran visualization
+bigram_graph <- bigram %>%
+  filter(n > 2) %>%
+  graph_from_data_frame()
+
+ggraph(bigram_graph, layout = "fr") +
+  geom_edge_link() +
+  geom_node_point() +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1)
+
+```
+
+The ones to look at are *call options, short-sellers, hedge funds, wall street, cash flows, social media*. Considering how this episode was, these bigrams can explain the situation and the players involved, that’s the reason they are the most commons in the articles.
+
+## Twitter analysis
+
+Due to the fact that this mobilization started on social media, I did also a Twitter analysis to see how it would differ from the articles. For the first part I also did and sentiment analyze and 70% of the them have a negative score, again I plotted a cloud to better understand this.
+
+```{r , echo=FALSE, results='hide', message=F, warning=F}
+#getting twitter data
+consumer_key <- 'GtiBko8dYjU9EqM0R8FVCqfcm'
+consumer_secret <- '6GrzxAEd73Bns9Ld27wtq6MsVwc4hSOuAyS6JI27Prc3tHMLw2'
+access_token <- '1203808679109242881-YvzbwaMUHaHZJ110q1QNymOrkNiRzr'
+access_secret <- 'ToIi5oRXd4kdPKqAf2AEL89RZZofXG3craCAblcLio5xk'
+
+setup_twitter_oauth(consumer_key, consumer_secret, access_token, access_secret)
+raw_data <- twitteR::searchTwitter('#gamestop + #GME', n = 10000, since = '2020-06-01', retryOnRateLimit = 1e3)
+t_data = twitteR::twListToDF(raw_data)
+
+
+df_twit <- t_data %>%
+  unnest_tokens(word, text) %>%
+  anti_join(stop_words)
+
+
+#creating a dataframe without the stopwords
+count_twit <-  df_twit %>%
+  count(word, sort=TRUE)
+
+#using loughran data to analyse the financial related sentiment per publisher
+twit_sentiment_count <- df_twit %>%
+  inner_join(get_sentiments("loughran"), by = "word") %>%
+  count(sentiment,id) %>%
+  spread(sentiment, n, fill = 0)
+
+#creating a score based on the sentiments
+twit_sentiment_count <- twit_sentiment_count %>%
+  mutate(score = (positive - negative) / (positive + negative)) %>%
+  mutate(source = reorder(id, score))
+
+#checking how much each score appears
+twit_sentiment_count %>%
+  group_by(score) %>%
+  count()
+
+#creating a word clound with the financial sentiment
+
+count_twit %>%
+  inner_join(get_sentiments("loughran")) %>%
+  count(word, sentiment, sort=TRUE) %>%
+  acast(word ~sentiment, value.var="n", fill=0) %>%
+  comparison.cloud(colors  = c("grey20", "grey80"),
+                   max.words=30, scale = c(1,0.1))
+
+```
+
+
+We can check here that even though the sentiments are the same: *negative, constraining, and uncertainty*, the words that are correlated to that on Twitter are different. The words *restriction, limits, possibilities, confusion*, make me believe that those people were more frustrated to the fact that they were simply blocked from buying that stock, which also explains the actual price that is back to $58.50 (2/10/2021). It’s reasonable to say that even if the articles and Twitter have the same negative score the reason for, they are different.
+
+To finish the Twitter analysis, I did a TF-IDF which didn’t produce any conclusive insight, so I decided to create a bigram. 
+
+```{r , echo=FALSE, results='hide', message=F, warning=F}
+#doing bigram analysis
+bigram_twit <- t_data %>%
+  unnest_tokens(bigram, text, token = "ngrams", n=2) %>%
+  separate(bigram, c("word1", "word2"), sep=" ") %>%
+  filter(!word1 %in% stop_words$word) %>%
+  filter(is.na(word1) == FALSE) %>%
+  filter(!word2 %in% stop_words$word) %>%
+  filter(is.na(word2) == FALSE) %>%
+  count(word1, word2, sort = TRUE)
+
+#ploting bigran visualization
+bigram_graph_twit <- bigram_twit %>%
+  filter(n > 10) %>%
+  graph_from_data_frame()
+
+ggraph(bigram_graph_twit, layout = "fr") +
+  geom_edge_link() +
+  geom_node_point() +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1)
+
+
+```
+
+Exanimating it we can see a different picture than when I did in the articles, now no more technical terms neither negative ones. Is interesting how the ticker GME has linked with holding and short at the same time, in the articles the word holding was not present in the analyses which are understandable because the valuation numbers for this stock wouldn’t recommend a hold not even when it was in the beginning at $17.51, showing somehow that people still have some hope on it. Behavioral finance explains that too as people will still hold an asset even if you are having a huge loss because if you don’t sell it you don’t have a loss yet. Another word that I found interesting linked with GME was jealous, that people could have this feeling with the ones that had to make profits.
+
+## Conclusion
+
+After checking the words most used and the sentiment in both articles and Twitter, we saw some differences which were expected about how they reach the subject since the articles are supposed to give information while Twitter is just people expressing their feelings.
+
+For me, the most interesting part was comparing the sentiment analyses then looking in the bigram and finding some interesting links that could somehow unveil us about the real feeling in the sentences just by looking at some words.
+
+The final insight is that after analyzing the social media, which was the cataclysm for this event, isn't possible to believe that the stock will return to the higher prices and this is confirmed by the negative analysis from the articles.
+
+
+## References
+
+Eavis, P. (2021, February 1). “What Is GameStop, the Company, Really Worth? Does It Matter?”.  Retrieved from https://www.nytimes.com/2021/02/01/business/gamestop-how-much-worth.html
+
+Kaissar, N. (2021, February 1). “GameStop Furor Inflicts Lasting Pain on Hedge Funds”.  Retrieved from https://www.bloomberg.com/opinion/articles/2021-02-01/gamestop-gme-short-squeeze-inflicts-lasting-pain-on-hedge-funds
+
+Kilbert, B. (2021, January 23). “The world's biggest video game retailer, GameStop, is dying: Here's what led to the retail giant's slow demise”.  Retrieved from https://www.businessinsider.com/gamestop-worlds-biggest-video-game-retailer-decline-explained-2019-7
+
+Levine, M. (2021, January 25). “The GameStop Game Never Stops”.  Retrieved from https://www.bloomberg.com/opinion/articles/2021-01-25/the-game-never-stops
+
+Malik, K. (2021, January 31). “An uprising against Wall Street? Hardly. GameStop was about the absurdity of the stock market”.  Retrieved from https://www.theguardian.com/commentisfree/2021/jan/31/market-is-rigged-in-favour-of-rich-as-gamestop-fiasco-reveals
+
+Panetta, G. (2021, January 28). “'Unacceptable': AOC calls out Robinhood for blocking GameStop purchases and suggests holding a hearing on it”.  Retrieved from https://www.businessinsider.com/unacceptable-aoc-calls-out-robinhood-for-blocking-gamestop-purchase-2021-1
+
